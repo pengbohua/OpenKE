@@ -2,78 +2,102 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
-
+from .Model import Model
+import time
 import torch
-import torch.nn as nn
+from typing import List
 
-import torch
-import torch.nn as nn
-import os
-import json
-import numpy as np
 
-class BaseModule(nn.Module):
+def ensure_divisibility(numerator, denominator):
+    """Ensure that numerator is divisible by the denominator."""
+    assert numerator % denominator == 0, "{} is not divisible by {}".format(
+        numerator, denominator
+    )
 
-	def __init__(self):
-		super(BaseModule, self).__init__()
-		self.zero_const = nn.Parameter(torch.Tensor([0]))
-		self.zero_const.requires_grad = False
-		self.pi_const = nn.Parameter(torch.Tensor([3.14159265358979323846]))
-		self.pi_const.requires_grad = False
+def divide(numerator, denominator):
+    """Ensure that numerator is divisible by the denominator and return
+    the division value."""
+    ensure_divisibility(numerator, denominator)
+    return numerator // denominator
 
-	def load_checkpoint(self, path):
-		self.load_state_dict(torch.load(os.path.join(path)))
-		self.eval()
+def split_tensor_along_last_dim(
+    tensor: torch.Tensor,
+    num_partitions: int,
+    contiguous_split_chunks: bool = False,
+) -> List[torch.Tensor]:
+    """ Split a tensor along its last dimension.
+        Arguments:
+            tensor: input tensor.
+            num_partitions: number of partitions to split the tensor
+            contiguous_split_chunks: If True, make each chunk contiguous
+                                     in memory.
+        Returns:
+            A list of Tensors
+    """
+    # Get the size and dimension.
+    last_dim = tensor.dim() - 1
+    last_dim_size = divide(tensor.size()[last_dim], num_partitions)
+    # Split.
+    tensor_list = torch.split(tensor, last_dim_size, dim=last_dim)
+    # Note: torch.split does not create contiguous tensors by default.
+    if contiguous_split_chunks:
+        return tuple(chunk.contiguous() for chunk in tensor_list)
 
-	def save_checkpoint(self, path):
-		torch.save(self.state_dict(), path)
+    return tensor_list
 
-	def load_parameters(self, path):
-		f = open(path, "r")
-		parameters = json.loads(f.read())
-		f.close()
-		for i in parameters:
-			parameters[i] = torch.Tensor(parameters[i])
-		self.load_state_dict(parameters, strict = False)
-		self.eval()
+def _gather_along_last_dim(input_):
+    """Gather tensors and concatinate along the last dimension."""
+    world_size = torch.distributed.get_world_size()
+    # Bypass the function if we are using only 1 GPU.
+    if world_size == 1:
+        return input_
 
-	def save_parameters(self, path):
-		f = open(path, "w")
-		f.write(json.dumps(self.get_parameters("list")))
-		f.close()
+    # Size and dimension.
+    first_dim_size = input_.size(0)
+    last_dim_size = input_.size(-1)
+    rank = torch.distributed.get_rank()
 
-	def get_parameters(self, mode = "numpy", param_dict = None):
-		all_param_dict = self.state_dict()
-		if param_dict == None:
-			param_dict = all_param_dict.keys()
-		res = {}
-		for param in param_dict:
-			if mode == "numpy":
-				res[param] = all_param_dict[param].cpu().numpy()
-			elif mode == "list":
-				res[param] = all_param_dict[param].cpu().numpy().tolist()
-			else:
-				res[param] = all_param_dict[param]
-		return res
+    output = torch.zeros(first_dim_size*world_size, last_dim_size, device=torch.device("cuda", rank))
+    torch.distributed.all_gather_into_tensor(output, input_)
+    # Note: torch.cat already creates a contiguous tensor.
+    output = torch.cat([output[i*first_dim_size: (i+1)*first_dim_size,:] for i in range(world_size)], dim=-1).contiguous()
+    return output
 
-	def set_parameters(self, parameters):
-		for i in parameters:
-			parameters[i] = torch.Tensor(parameters[i])
-		self.load_state_dict(parameters, strict = False)
-		self.eval()
+def _split_along_last_dim(input_):
+    """Split the tensor along its last dimension and keep the
+    corresponding slice."""
 
-class Model(BaseModule):
+    world_size = torch.distributed.get_world_size()
+    # Bypass the function if we are using only 1 GPU.
+    if world_size == 1:
+        return input_
 
-	def __init__(self, ent_tot, rel_tot):
-		super(Model, self).__init__()
-		self.ent_tot = ent_tot
-		self.rel_tot = rel_tot
+    # Split along last dimension.
+    input_list = split_tensor_along_last_dim(input_, world_size)
 
-	def forward(self):
-		raise NotImplementedError
-	
-	def predict(self):
-		raise NotImplementedError
+    # Note: torch.split does not create contiguous tensors by default.
+    rank = torch.distributed.get_rank()
+    output = input_list[rank].contiguous()
+
+    return output
+
+class Gather(torch.autograd.Function):
+    """Gather the input from model parallel region and concatinate."""
+
+    @staticmethod
+    def symbolic(graph, input_):
+        return _gather_along_last_dim(input_)
+    
+    @staticmethod
+    def forward(ctx, input_):
+
+        return _gather_along_last_dim(input_)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+
+        return _split_along_last_dim(grad_output)
+
 
 class TransE_bmt(Model):
 
@@ -90,7 +114,6 @@ class TransE_bmt(Model):
 		self.world_size = world_size
 		self.split_size = int(self.dim / self.world_size)
 		assert self.dim % self.world_size == 0
-		# 新增3：定义并把模型放置到单独的GPU上
 		self.device = torch.device("cuda", self.local_rank)
 
 		self.ent_embeddings = nn.Embedding(self.ent_tot, self.dim)
@@ -151,15 +174,20 @@ class TransE_bmt(Model):
 			r = F.normalize(r, 2, -1)
 			t = F.normalize(t, 2, -1)
 		# split according to local rank
+		
 		h = h[:, self.split_size*self.local_rank:self.split_size*(self.local_rank + 1)]
 		r = r[:, self.split_size*self.local_rank:self.split_size*(self.local_rank + 1)]
 		t = t[:, self.split_size*self.local_rank:self.split_size*(self.local_rank + 1)]
+		
 		score = self._calc(h ,t, r, mode).to(self.device)
 		score = score.squeeze()
-		# gather score
-		gather_score = torch.zeros(score.size(0)*self.world_size, self.split_size, device=self.device, requires_grad=True)
-		dist.all_gather_into_tensor(gather_score, score)
-		gather_score = torch.cat([gather_score[i*score.size(0): (i+1)*score.size(0),:] for i in range(self.world_size)], dim=-1)
+		# # gather score
+		# gather_score = torch.zeros(score.size(0)*self.world_size, self.split_size, device=self.device, requires_grad=True)
+		# dist.all_gather_into_tensor(gather_score, score)
+		# gather_score = torch.cat([gather_score[i*score.size(0): (i+1)*score.size(0),:] for i in range(self.world_size)], dim=-1)
+		
+		gather_score = Gather.apply(score)
+		# x = input()
 		gather_score = torch.norm(gather_score, self.p_norm, -1).flatten()
 		if self.margin_flag:
 			return self.margin - gather_score

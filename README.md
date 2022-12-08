@@ -9,7 +9,8 @@ requirements: torch >= 1.13
 2. python train_transe_FB15K237.py
 
 ## Problem
-embedding切分，计算，合并，目前前向已对齐，反向时梯度传不上去，ent_embedding的grad为None
+目前只在transe计算score（h + r = t）的时候是分布式计算，其余运算各个node上都一样。
+代码上与openke不同的只在./bmtrain_train_transe_FB15K237.py、./openke/module/models/TransE_bmt.py
 
 # OpenKE-PyTorch
 
