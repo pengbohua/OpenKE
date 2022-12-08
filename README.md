@@ -1,3 +1,16 @@
+# OpenKE-Distributed
+requirements: torch >= 1.13
+
+## make
+1. bash make.sh
+
+## For debug
+1. python -m torch.distributed.launch --nproc_per_node 2 bmtrain_train_transe_FB15K237.py
+2. python train_transe_FB15K237.py
+
+## Problem
+embedding切分，计算，合并，目前前向已对齐，反向时梯度传不上去，ent_embedding的grad为None
+
 # OpenKE-PyTorch
 
 This repository is a subproject of THU-OpenSK, and all subprojects of THU-OpenSK are as follows.
