@@ -5,7 +5,7 @@ from .Model import Model
 
 class TransE(Model):
 
-	def __init__(self, ent_tot, rel_tot, dim = 100, p_norm = 1, norm_flag = True, margin = None, epsilon = None):
+	def __init__(self, ent_tot, rel_tot, dim = 100, p_norm = 1, norm_flag = True, margin = None, epsilon = None, local_rank=0):
 		super(TransE, self).__init__(ent_tot, rel_tot)
 		
 		self.dim = dim
@@ -13,6 +13,7 @@ class TransE(Model):
 		self.epsilon = epsilon
 		self.norm_flag = norm_flag
 		self.p_norm = p_norm
+		self.local_rank = local_rank
 
 		self.ent_embeddings = nn.Embedding(self.ent_tot, self.dim)
 		self.rel_embeddings = nn.Embedding(self.rel_tot, self.dim)
@@ -67,6 +68,7 @@ class TransE(Model):
 		h = self.ent_embeddings(batch_h)
 		t = self.ent_embeddings(batch_t)
 		r = self.rel_embeddings(batch_r)
+		# split according to local rank
 		score = self._calc(h ,t, r, mode)
 		if self.margin_flag:
 			return self.margin - score

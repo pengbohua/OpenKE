@@ -23,7 +23,9 @@ class Trainer(object):
 				 use_gpu = True,
 				 opt_method = "sgd",
 				 save_steps = None,
-				 checkpoint_dir = None):
+				 checkpoint_dir = None,
+				 local_rank=0,
+				 world_size=1):
 
 		self.work_threads = 8
 		self.train_times = train_times
@@ -39,6 +41,8 @@ class Trainer(object):
 		self.use_gpu = use_gpu
 		self.save_steps = save_steps
 		self.checkpoint_dir = checkpoint_dir
+		self.local_rank = local_rank
+		self.world_size = world_size
 
 	def train_one_step(self, data):
 		self.optimizer.zero_grad()
@@ -49,7 +53,13 @@ class Trainer(object):
 			'batch_y': self.to_var(data['batch_y'], self.use_gpu),
 			'mode': data['mode']
 		})
+		if self.world_size >= 2:
+			loss.to(self.local_rank)
+		# print(self.model.module.model.ent_embeddings.weight.grad)
+		# print(self.model.module.model.ent_embeddings.weight.requires_grad)
 		loss.backward()
+		# print(self.model.module.model.ent_embeddings.weight.grad)
+		# print(self.model.module.model.ent_embeddings.weight.requires_grad)
 		self.optimizer.step()		 
 		return loss.item()
 
