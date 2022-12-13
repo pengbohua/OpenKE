@@ -75,6 +75,22 @@ struct Parameter {
 	bool filter_flag;
 };
 
+
+struct Parameter {
+	INT id;
+	INT *batch_h;
+	INT *batch_t;
+	INT *batch_r;
+	REAL *batch_y;
+	INT batchSize;
+	INT negRate;
+	INT negRelRate;
+	bool p;
+	bool val_loss;
+	INT mode;
+	bool filter_flag;
+};
+
 void* getBatch(void* con) {
 	Parameter *para = (Parameter *)(con);
 	INT id = para -> id;

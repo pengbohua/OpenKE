@@ -13,6 +13,7 @@ from .RESCAL import RESCAL
 from .Analogy import Analogy
 from .SimplE import SimplE
 from .RotatE import RotatE
+from .TransE_bmt import TransE_bmt
 
 __all__ = [
     'Model',
@@ -25,5 +26,6 @@ __all__ = [
     'RESCAL',
     'Analogy',
     'SimplE',
-    'RotatE'
+    'RotatE',
+    'TransE_bmt'
 ]

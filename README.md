@@ -1,3 +1,17 @@
+# OpenKE-Distributed
+requirements: torch >= 1.13
+
+## make
+1. bash make.sh
+
+## For debug
+1. python -m torch.distributed.launch --nproc_per_node 2 bmtrain_train_transe_FB15K237.py
+2. python train_transe_FB15K237.py
+
+## Problem
+目前只在transe计算score（h + r = t）的时候是分布式计算，其余运算各个node上都一样。
+代码上与openke不同的只在./bmtrain_train_transe_FB15K237.py、./openke/module/models/TransE_bmt.py
+
 # OpenKE-PyTorch
 
 This repository is a subproject of THU-OpenSK, and all subprojects of THU-OpenSK are as follows.
